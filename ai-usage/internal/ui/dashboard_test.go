@@ -94,6 +94,12 @@ func TestRenderDashboardView(t *testing.T) {
 				EstimatedCost: 1.75,
 				Status:        "ok",
 			},
+			{
+				ProviderID:   "copilot",
+				DisplayName:  "GitHub Copilot",
+				Status:       "error",
+				ErrorMessage: "no GitHub token configured",
+			},
 		},
 	}
 
@@ -122,6 +128,12 @@ func TestRenderDashboardView(t *testing.T) {
 	}
 	if !strings.Contains(out, "Google Gemini") {
 		t.Errorf("expected Google Gemini in output")
+	}
+	if !strings.Contains(out, "🔴 no GitHub token") {
+		t.Errorf("expected red ball error indicator in output")
+	}
+	if strings.Contains(out, "❌") {
+		t.Errorf("expected no red X in output")
 	}
 }
 

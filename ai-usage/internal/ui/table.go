@@ -44,7 +44,14 @@ func RenderTable(w io.Writer, snapshot *core.UsageSnapshot) {
 	sb.WriteString(FormatBoxDivider(boxWidth))
 
 	timeStr := fmt.Sprintf("📅 Current Time   : %s", snapshot.Timestamp.Local().Format("2006-01-02 15:04:05 MST"))
-	cycleStr := fmt.Sprintf("💳 Default Window : %s ➔ %s", snapshot.BillingCycle.Start.Local().Format("2006-01-02"), snapshot.BillingCycle.End.Local().Format("2006-01-02"))
+	start := snapshot.BillingCycle.Start
+	end := snapshot.BillingCycle.End
+	if start.IsZero() || end.IsZero() {
+		win := core.CalculateBillingCycle(snapshot.Timestamp, 1)
+		start = win.Start
+		end = win.End
+	}
+	cycleStr := fmt.Sprintf("💳 Default Window : %s ➔ %s", start.Local().Format("2006-01-02"), end.Local().Format("2006-01-02"))
 	provStr := fmt.Sprintf("📊 Total Providers: %d (Active: %d)", snapshot.TotalProviders, snapshot.ActiveOkCount)
 	costStr := fmt.Sprintf("💰 Total Est Cost : $%.2f", snapshot.TotalCostUSD)
 
@@ -80,7 +87,7 @@ func RenderTable(w io.Writer, snapshot *core.UsageSnapshot) {
 			if len(errText) > 26 {
 				errText = errText[:23] + "..."
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t❌ %s\n",
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t-\t-\t-\t-\t-\t-\t🔴 %s\n",
 				rank, p.DisplayName, "-", cycleWindowStr, errText)
 			continue
 		}

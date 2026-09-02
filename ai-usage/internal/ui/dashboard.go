@@ -31,17 +31,17 @@ const (
 func (s SortMode) String() string {
 	switch s {
 	case SortByUsagePercent:
-		return "Usage % (Highest First)"
+		return "Usage %"
 	case SortByConsumed:
-		return "Consumed (Highest First)"
+		return "Consumed"
 	case SortByQuota:
-		return "Quota (Largest First)"
+		return "Quota"
 	case SortByRemaining:
-		return "Remaining Quota (Lowest First)"
+		return "Remaining"
 	case SortByCost:
-		return "Estimated Cost (Highest First)"
+		return "Cost"
 	case SortByName:
-		return "Provider Name (A-Z)"
+		return "Name (A-Z)"
 	default:
 		return "Default"
 	}
@@ -430,7 +430,14 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 	sb.WriteString(FormatTwoColumnBoxLine(timeStr, 48, refreshStr, boxWidth))
 
 	if snap != nil {
-		cycleStr := fmt.Sprintf("💳 Billing Window : %s ➔ %s", snap.BillingCycle.Start.Format("2006-01-02"), snap.BillingCycle.End.Format("2006-01-02"))
+		start := snap.BillingCycle.Start
+		end := snap.BillingCycle.End
+		if start.IsZero() || end.IsZero() {
+			win := core.CalculateBillingCycle(now, 1)
+			start = win.Start
+			end = win.End
+		}
+		cycleStr := fmt.Sprintf("💳 Billing Window : %s ➔ %s", start.Local().Format("2006-01-02"), end.Local().Format("2006-01-02"))
 		provStr := fmt.Sprintf("📊 Providers    : %d Active / %d Total", snap.ActiveOkCount, snap.TotalProviders)
 		sb.WriteString(FormatTwoColumnBoxLine(cycleStr, 48, provStr, boxWidth))
 
@@ -445,7 +452,7 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 	if filterQ != "" {
 		filterTag = fmt.Sprintf("'%s'", filterQ)
 	}
-	filterStr := fmt.Sprintf("🏷️  Filter Mode   : %s", filterTag)
+	filterStr := fmt.Sprintf("🔖 Filter Mode    : %s", filterTag)
 	sortStr := fmt.Sprintf("🔀 Sort Mode    : %s", sortMode.String())
 	sb.WriteString(FormatTwoColumnBoxLine(filterStr, 48, sortStr, boxWidth))
 
@@ -521,7 +528,7 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 				if len(errText) > 20 {
 					errText = errText[:17] + "..."
 				}
-				sb.WriteString(fmt.Sprintf("%s%s%-3s %-18s %-24s %-11s %-14s %-10s %-8s %-14s %-10s ❌ %s%s\n",
+				sb.WriteString(fmt.Sprintf("%s%s%-3s %-18s %-24s %-11s %-14s %-10s %-8s %-14s %-10s 🔴 %s%s\n",
 					rowPrefix, cursor, rank, p.DisplayName, "-", cycleStr, "-", "-", "-", "-", "-", errText, rowSuffix))
 				continue
 			}

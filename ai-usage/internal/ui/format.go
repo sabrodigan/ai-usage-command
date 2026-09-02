@@ -15,7 +15,7 @@ func VisualWidth(s string) int {
 			continue
 		}
 		if inEscape {
-			if r == 'm' {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
 				inEscape = false
 			}
 			continue
@@ -23,6 +23,12 @@ func VisualWidth(s string) int {
 
 		// Handle Zero-width characters
 		if (r >= 0xFE00 && r <= 0xFE0F) || r == 0x200D || r == 0x200E || r == 0x200F {
+			continue
+		}
+
+		// Handle Single-width symbols and arrows in Dingbats / Miscellaneous ranges
+		if r == '➔' || r == '✔' || r == '✓' || r == 0x2699 || (r >= 0x2790 && r <= 0x27AF) {
+			w += 1
 			continue
 		}
 
