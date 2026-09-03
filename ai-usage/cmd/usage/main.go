@@ -79,15 +79,15 @@ func main() {
 	case "history":
 		runHistory(os.Args[2:])
 	case "version", "--version", "-v":
-		fmt.Printf("ai-usage CLI v%s (SQLite Analytics + Live Dashboard + AI Intelligence)\n", Version)
-	case "help", "--help", "-h":
+		fmt.Printf("ai-usage CLI v%s by Stephen Brodigan (SQLite Analytics + Live Dashboard + AI Intelligence)\n", Version)
+	case "help", "--help", "-h", "-help":
 		printUsageHelp()
 	default:
 		if strings.HasPrefix(command, "-") {
 			runNow(os.Args[1:])
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Unknown command: '%s'\nRun 'usage help' for available commands.\n", command)
+		fmt.Fprintf(os.Stderr, "Unknown command: '%s'\nRun 'usage --help' for available commands.\n", command)
 		os.Exit(1)
 	}
 }
@@ -857,6 +857,7 @@ func runHistory(args []string) {
 func printUsageHelp() {
 	fmt.Print(`
 AI Usage CLI Tracker (SQLite Analytics + Live Dashboard + AI Intelligence)
+Author: Stephen Brodigan
 Monitor, aggregate, and rank developer AI model consumption.
 
 Usage:
@@ -888,6 +889,9 @@ Management Commands:
   history                     Show recent usage snapshots
   version                     Display version information
   help                        Show this help message
+
+Author:
+  Stephen Brodigan
 
 Local Database:
   Data is stored locally in ~/.config/ai-usage/usage.db (pure Go embedded SQLite).

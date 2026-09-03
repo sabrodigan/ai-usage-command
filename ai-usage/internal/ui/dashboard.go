@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"ai-usage/internal/core"
-	"golang.org/x/sys/unix"
 )
 
 // SortMode represents how providers are ordered in the dashboard.
@@ -61,29 +60,6 @@ type DashboardState struct {
 	NextFetchTime   time.Time
 
 	mu sync.Mutex
-}
-
-// EnableRawMode switches the terminal to non-canonical / raw mode and returns a restore function.
-func EnableRawMode() (func(), error) {
-	fd := int(os.Stdin.Fd())
-	termios, err := unix.IoctlGetTermios(fd, unix.TCGETS)
-	if err != nil {
-		return func() {}, err
-	}
-
-	oldState := *termios
-	termios.Lflag &^= unix.ECHO | unix.ICANON | unix.ISIG
-	termios.Cc[unix.VMIN] = 1
-	termios.Cc[unix.VTIME] = 0
-
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, termios); err != nil {
-		return func() {}, err
-	}
-
-	restore := func() {
-		_ = unix.IoctlSetTermios(fd, unix.TCSETS, &oldState)
-	}
-	return restore, nil
 }
 
 // RunDashboard runs the interactive live dashboard loop.
@@ -450,7 +426,7 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 
 	filterTag := "None"
 	if filterQ != "" {
-		filterTag = fmt.Sprintf("'%s'", filterQ)
+		filterTag = fmt.Sprintf("'%s'", truncate(filterQ, 16))
 	}
 	filterStr := fmt.Sprintf("🔖 Filter Mode    : %s", filterTag)
 	sortStr := fmt.Sprintf("🔀 Sort Mode    : %s", sortMode.String())
@@ -502,11 +478,11 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 			"---", "----", "--------", "------------", "-----", "--------", "-----", "-------", "------------", "---------", "---------------"))
 
 		for i, p := range providers {
-			cursor := "  "
+			selMarker := ""
 			rowPrefix := ""
 			rowSuffix := ""
 			if i == selectedIdx {
-				cursor = "► "
+				selMarker = "►"
 				rowPrefix = "\033[1;36m" // Cyan Bold
 				rowSuffix = "\033[0m"
 			}
@@ -514,12 +490,25 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 			rank := fmt.Sprintf("#%d", i+1)
 			cycleStr := "-"
 			if !p.BillingStart.IsZero() && !p.BillingEnd.IsZero() {
-				cycleStr = fmt.Sprintf("%s➔%s", p.BillingStart.Format("01/02"), p.BillingEnd.Format("01/02"))
+				cycleStr = fmt.Sprintf("%s➔%s", p.BillingStart.Local().Format("01/02"), p.BillingEnd.Local().Format("01/02"))
 			}
 
 			if p.IsStale {
-				sb.WriteString(fmt.Sprintf("%s%s%-3s %-18s %-24s %-11s %-14s %-10s %-8s %-14s %-10s ⚠️ STALE (%dd)%s\n",
-					rowPrefix, cursor, rank, p.DisplayName, p.ModelOrTier, cycleStr, "0 "+string(p.Unit), p.FormatQuota(), "0.0%", "[············]", "$  0.00", p.DaysInactive, rowSuffix))
+				sb.WriteString(fmt.Sprintf("%s  %-3s %-4s %-18s %-24s %-11s %-14s %-10s %8s %-14s %-10s ⚠️ STALE (%dd)%s\n",
+					rowPrefix,
+					selMarker,
+					rank,
+					truncate(p.DisplayName, 18),
+					truncate(p.ModelOrTier, 24),
+					cycleStr,
+					truncate("0 "+string(p.Unit), 14),
+					truncate(p.FormatQuota(), 10),
+					"0.0%",
+					RenderProgressBar(0, 12),
+					"$  0.00",
+					p.DaysInactive,
+					rowSuffix,
+				))
 				continue
 			}
 
@@ -528,8 +517,21 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 				if len(errText) > 20 {
 					errText = errText[:17] + "..."
 				}
-				sb.WriteString(fmt.Sprintf("%s%s%-3s %-18s %-24s %-11s %-14s %-10s %-8s %-14s %-10s 🔴 %s%s\n",
-					rowPrefix, cursor, rank, p.DisplayName, "-", cycleStr, "-", "-", "-", "-", "-", errText, rowSuffix))
+				sb.WriteString(fmt.Sprintf("%s  %-3s %-4s %-18s %-24s %-11s %-14s %-10s %8s %-14s %-10s 🔴 %s%s\n",
+					rowPrefix,
+					selMarker,
+					rank,
+					truncate(p.DisplayName, 18),
+					"-",
+					cycleStr,
+					"-",
+					"-",
+					"-",
+					"-",
+					"-",
+					errText,
+					rowSuffix,
+				))
 				continue
 			}
 
@@ -544,15 +546,15 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 
 			bar := RenderProgressBar(p.PercentUsed, 12)
 			costStr := fmt.Sprintf("$%6.2f", p.EstimatedCost)
-			sb.WriteString(fmt.Sprintf("%s%s%-3s %-18s %-24s %-11s %-14s %-10s %6.1f%% %-14s %-10s %s%s\n",
+			sb.WriteString(fmt.Sprintf("%s  %-3s %-4s %-18s %-24s %-11s %-14s %-10s %7.1f%% %-14s %-10s %s%s\n",
 				rowPrefix,
-				cursor,
+				selMarker,
 				rank,
 				truncate(p.DisplayName, 18),
 				truncate(p.ModelOrTier, 24),
 				cycleStr,
 				truncate(p.FormatConsumed(), 14),
-				p.FormatQuota(),
+				truncate(p.FormatQuota(), 10),
 				p.PercentUsed,
 				bar,
 				costStr,
@@ -568,24 +570,24 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 			sel := providers[selectedIdx]
 			cycleStr := "-"
 			if !sel.BillingStart.IsZero() && !sel.BillingEnd.IsZero() {
-				cycleStr = fmt.Sprintf("%s to %s", sel.BillingStart.Format("2006-01-02"), sel.BillingEnd.Format("2006-01-02"))
+				cycleStr = fmt.Sprintf("%s to %s", sel.BillingStart.Local().Format("2006-01-02"), sel.BillingEnd.Local().Format("2006-01-02"))
 			}
 
 			if expanded {
 				sb.WriteString(FormatBoxTop(boxWidth))
 				sb.WriteString(FormatBoxLine("🔎 SELECTED PROVIDER INSPECTION (EXPANDED DETAILS)", boxWidth))
 				sb.WriteString(FormatBoxDivider(boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Name         : %s", sel.DisplayName), 48, fmt.Sprintf("Provider ID  : %s", sel.ProviderID), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Name         : %s", truncate(sel.DisplayName, 30)), 48, fmt.Sprintf("Provider ID  : %s", sel.ProviderID), boxWidth))
 				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Model/Tier   : %s", truncate(sel.ModelOrTier, 32)), 48, fmt.Sprintf("Unit         : %s", string(sel.Unit)), boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Consumed     : %s", sel.FormatConsumed()), 48, fmt.Sprintf("Quota Rem.   : %s", sel.FormatRemaining()), boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Quota Total  : %s", sel.FormatQuota()), 48, fmt.Sprintf("Usage Ratio  : %.2f%%", sel.PercentUsed), boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Est. Cost    : $%.2f", sel.EstimatedCost), 48, fmt.Sprintf("Last Polled  : %s", sel.LastUpdated.Format("15:04:05 MST")), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Consumed     : %s", truncate(sel.FormatConsumed(), 30)), 48, fmt.Sprintf("Quota Rem.   : %s", truncate(sel.FormatRemaining(), 22)), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Quota Total  : %s", truncate(sel.FormatQuota(), 30)), 48, fmt.Sprintf("Usage Ratio  : %.2f%%", sel.PercentUsed), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Est. Cost    : $%.2f", sel.EstimatedCost), 48, fmt.Sprintf("Last Polled  : %s", sel.LastUpdated.Local().Format("15:04:05 MST")), boxWidth))
 				sb.WriteString(FormatBoxLine(fmt.Sprintf("Cycle Window : %s", cycleStr), boxWidth))
 				if sel.DataSource != "" {
 					sb.WriteString(FormatBoxLine(fmt.Sprintf("Data Source  : %s", sel.DataSource), boxWidth))
 				}
 				if sel.Status != "ok" {
-					sb.WriteString(FormatBoxLine(fmt.Sprintf("⚠️  Error      : %s", truncate(sel.ErrorMessage, 72)), boxWidth))
+					sb.WriteString(FormatBoxLine(fmt.Sprintf("⚠️  Error      : %s", truncate(sel.ErrorMessage, 70)), boxWidth))
 				}
 				sb.WriteString(FormatBoxBottom(boxWidth))
 				sb.WriteString("\n")
@@ -593,12 +595,12 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 				sb.WriteString(FormatBoxTop(boxWidth))
 				sb.WriteString(FormatBoxLine("🔎 SELECTED PROVIDER INSPECTION (Press [Space] to expand details)", boxWidth))
 				sb.WriteString(FormatBoxDivider(boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Name       : %s", sel.DisplayName), 48, fmt.Sprintf("Provider ID  : %s", sel.ProviderID), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Name       : %s", truncate(sel.DisplayName, 32)), 48, fmt.Sprintf("Provider ID  : %s", sel.ProviderID), boxWidth))
 				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Model/Tier : %s", truncate(sel.ModelOrTier, 32)), 48, fmt.Sprintf("Cycle Window : %s", cycleStr), boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Consumed   : %s", sel.FormatConsumed()), 48, fmt.Sprintf("Quota Rem.   : %s", sel.FormatRemaining()), boxWidth))
-				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Est. Cost  : $%.2f", sel.EstimatedCost), 48, fmt.Sprintf("Last Polled  : %s", sel.LastUpdated.Format("15:04:05 MST")), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Consumed   : %s", truncate(sel.FormatConsumed(), 30)), 48, fmt.Sprintf("Quota Rem.   : %s", truncate(sel.FormatRemaining(), 22)), boxWidth))
+				sb.WriteString(FormatTwoColumnBoxLine(fmt.Sprintf("Est. Cost  : $%.2f", sel.EstimatedCost), 48, fmt.Sprintf("Last Polled  : %s", sel.LastUpdated.Local().Format("15:04:05 MST")), boxWidth))
 				if sel.Status != "ok" {
-					sb.WriteString(FormatBoxLine(fmt.Sprintf("⚠️  Error    : %s", truncate(sel.ErrorMessage, 72)), boxWidth))
+					sb.WriteString(FormatBoxLine(fmt.Sprintf("⚠️  Error    : %s", truncate(sel.ErrorMessage, 70)), boxWidth))
 				}
 				sb.WriteString(FormatBoxBottom(boxWidth))
 				sb.WriteString("\n")
@@ -614,11 +616,12 @@ func renderDashboardView(w io.Writer, state *DashboardState) {
 }
 
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
 	if maxLen <= 3 {
-		return s[:maxLen]
+		return string(runes[:maxLen])
 	}
-	return s[:maxLen-3] + "..."
+	return string(runes[:maxLen-3]) + "..."
 }

@@ -180,3 +180,10 @@ File permissions are automatically restricted (`0600`) to protect API keys and t
 make test
 ```
 All unit tests run with Go's race detector enabled (`-race`).
+
+---
+
+## 👤 Author
+
+**Stephen Brodigan**
+
