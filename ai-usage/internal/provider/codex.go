@@ -8,24 +8,30 @@ import (
 	"time"
 
 	"ai-usage/internal/core"
+	"ai-usage/internal/credential"
 )
 
 type CodexAdapter struct {
 	APIKey      string
+	CredType    string
 	CustomQuota float64
 	ModelTier   string
 	client      *http.Client
 }
 
-func NewCodexAdapter(apiKey string, quota float64, modelTier string) *CodexAdapter {
+func NewCodexAdapter(apiKey, credType string, quota float64, modelTier string) *CodexAdapter {
 	if quota <= 0 {
 		quota = 4_000_000 // 4M tokens default
 	}
 	if modelTier == "" {
 		modelTier = "GPT-4o / Codex"
 	}
+	if credType == "" {
+		credType = string(credential.Detect(apiKey))
+	}
 	return &CodexAdapter{
 		APIKey:      apiKey,
+		CredType:    credType,
 		CustomQuota: quota,
 		ModelTier:   modelTier,
 		client:      NewHTTPClient(6 * time.Second),
@@ -58,6 +64,30 @@ func (c *CodexAdapter) FetchUsage(ctx context.Context, window core.BillingWindow
 
 	if !IsAPIKeyConfigured(c.APIKey) {
 		return nil, fmt.Errorf("no OpenAI API key configured")
+	}
+
+	// A Codex/ChatGPT OAuth token is a JWT scoped to the ChatGPT backend, not
+	// the platform API — the /v1/* endpoints reject it. Validate it locally by
+	// its expiry claim and report it as verified with usage unavailable.
+	if c.CredType == string(credential.OAuth) {
+		if exp, ok := credential.JWTExpiry(c.APIKey); ok && time.Now().After(exp) {
+			return nil, fmt.Errorf("OpenAI/Codex OAuth token expired %s ago; run `codex login`", time.Since(exp).Round(time.Minute))
+		}
+		return &core.ProviderUsage{
+			ProviderID:    c.ID(),
+			DisplayName:   c.DisplayName(),
+			ModelOrTier:   c.ModelTier,
+			Unit:          core.UnitTokens,
+			Consumed:      0,
+			Quota:         c.CustomQuota,
+			EstimatedCost: 0,
+			BillingStart:  window.Start,
+			BillingEnd:    window.End,
+			LastUpdated:   time.Now().UTC(),
+			Status:        "ok",
+			IsLive:        true,
+			DataSource:    "OpenAI ChatGPT OAuth session (verified — platform usage API not available)",
+		}, nil
 	}
 
 	// Verify key via models endpoint

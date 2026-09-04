@@ -138,7 +138,7 @@ func getActiveTasks(cfg *config.Config, now time.Time) []core.ProviderTask {
 	// Claude adapter
 	if p, exists := cfg.Providers["claude"]; exists && p.Enabled {
 		tasks = append(tasks, core.ProviderTask{
-			Adapter: provider.NewClaudeAdapter(p.GetDecryptedKey(), p.CustomQuota, p.ModelTier),
+			Adapter: provider.NewClaudeAdapter(p.GetDecryptedKey(), p.ResolvedCredentialType(), p.CustomQuota, p.ModelTier),
 			Window:  getWin(p),
 		})
 	}
@@ -146,7 +146,7 @@ func getActiveTasks(cfg *config.Config, now time.Time) []core.ProviderTask {
 	// OpenAI / Codex adapter
 	if p, exists := cfg.Providers["codex"]; exists && p.Enabled {
 		tasks = append(tasks, core.ProviderTask{
-			Adapter: provider.NewCodexAdapter(p.GetDecryptedKey(), p.CustomQuota, p.ModelTier),
+			Adapter: provider.NewCodexAdapter(p.GetDecryptedKey(), p.ResolvedCredentialType(), p.CustomQuota, p.ModelTier),
 			Window:  getWin(p),
 		})
 	}
@@ -154,7 +154,7 @@ func getActiveTasks(cfg *config.Config, now time.Time) []core.ProviderTask {
 	// Gemini adapter
 	if p, exists := cfg.Providers["gemini"]; exists && p.Enabled {
 		tasks = append(tasks, core.ProviderTask{
-			Adapter: provider.NewGeminiAdapter(p.GetDecryptedKey(), p.CustomQuota, p.ModelTier),
+			Adapter: provider.NewGeminiAdapter(p.GetDecryptedKey(), p.ResolvedCredentialType(), p.CustomQuota, p.ModelTier),
 			Window:  getWin(p),
 		})
 	}
@@ -554,7 +554,7 @@ func runProviders(args []string) {
 	fmt.Println()
 	fmt.Println("Configured AI Model Providers:")
 	fmt.Println("───────────────────────────────────────────────────────────────────────────────────────────────────")
-	fmt.Printf("%-15s %-20s %-10s %-12s %-12s %-12s %s\n", "ID", "NAME", "STATUS", "QUOTA", "RESET DAY", "ENCRYPTED", "MODEL / TIER")
+	fmt.Printf("%-15s %-20s %-10s %-12s %-10s %-9s %-12s %s\n", "ID", "NAME", "STATUS", "QUOTA", "RESET DAY", "CRED", "ENCRYPTED", "MODEL / TIER")
 	fmt.Println("───────────────────────────────────────────────────────────────────────────────────────────────────")
 
 	for id, p := range cfg.Providers {
@@ -585,7 +585,12 @@ func runProviders(args []string) {
 			}
 		}
 
-		fmt.Printf("%-15s %-20s %-10s %-12s %-12s %-12s %s\n", id, p.DisplayName, status, quotaStr, resetStr, isEncrypted, p.ModelTier)
+		credType := p.ResolvedCredentialType()
+		if credType == "" {
+			credType = "-"
+		}
+
+		fmt.Printf("%-15s %-20s %-10s %-12s %-10s %-9s %-12s %s\n", id, p.DisplayName, status, quotaStr, resetStr, credType, isEncrypted, p.ModelTier)
 	}
 	fmt.Println("───────────────────────────────────────────────────────────────────────────────────────────────────")
 	fmt.Printf("Default global billing cycle anchor: %s of each month.\n\n", ordinal(cfg.AnchorBillingDay))

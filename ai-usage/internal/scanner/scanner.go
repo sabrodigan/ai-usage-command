@@ -12,6 +12,7 @@ import (
 
 	"ai-usage/internal/config"
 	"ai-usage/internal/core"
+	"ai-usage/internal/credential"
 )
 
 // CredentialStatus represents whether a detected credential is newly discovered, updated, or already configured.
@@ -28,7 +29,8 @@ type ScannedCredential struct {
 	ProviderID        string           `json:"provider_id"`
 	DisplayName       string           `json:"display_name"`
 	SourcePath        string           `json:"source_path"`
-	SourceType        string           `json:"source_type"` // "file", "env", "service"
+	SourceType        string           `json:"source_type"`      // "file", "env", "service"
+	CredentialType    string           `json:"credential_type"`  // "api_key" | "oauth" | "session"
 	KeySnippet        string           `json:"key_snippet"`
 	RawKey            string           `json:"-"`
 	ModelTier         string           `json:"model_tier"`
@@ -64,6 +66,9 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 	}
 
 	addOrUpdate := func(c ScannedCredential) {
+		if c.CredentialType == "" {
+			c.CredentialType = string(credential.Detect(c.RawKey))
+		}
 		for i, existing := range rawFound {
 			if existing.ProviderID == c.ProviderID {
 				// Prefer file / active session over env var if both present
@@ -138,8 +143,10 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 		}
 		_ = json.Unmarshal(data, &auth)
 		key := auth.OpenAIKey
+		credType := string(credential.APIKey)
 		if key == "" {
 			key = auth.Tokens.AccessToken
+			credType = string(credential.OAuth)
 		}
 		if key != "" {
 			addOrUpdate(ScannedCredential{
@@ -147,6 +154,7 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 				DisplayName:       "OpenAI Codex",
 				SourcePath:        codexAuth,
 				SourceType:        "file (~/.codex/auth.json)",
+				CredentialType:    credType,
 				KeySnippet:        maskKey(key),
 				RawKey:            key,
 				ModelTier:         "GPT-4o / Codex",
@@ -186,8 +194,10 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 		}
 		_ = json.Unmarshal(data, &creds)
 		key := creds.ApiKey
+		credType := string(credential.APIKey)
 		if key == "" {
 			key = creds.ClaudeAiOauth.AccessToken
+			credType = string(credential.OAuth)
 		}
 		if key != "" {
 			addOrUpdate(ScannedCredential{
@@ -195,6 +205,7 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 				DisplayName:       "Anthropic Claude",
 				SourcePath:        claudeCreds,
 				SourceType:        "file (~/.claude/.credentials.json)",
+				CredentialType:    credType,
 				KeySnippet:        maskKey(key),
 				RawKey:            key,
 				ModelTier:         "Claude 3.5 Sonnet / Opus",
@@ -241,6 +252,7 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 				DisplayName:       "Google Gemini",
 				SourcePath:        geminiCreds,
 				SourceType:        "file (~/.gemini/oauth_creds.json)",
+				CredentialType:    string(credential.OAuth),
 				KeySnippet:        maskKey(key),
 				RawKey:            key,
 				ModelTier:         "Gemini 1.5 Pro / Flash",
@@ -451,16 +463,24 @@ func ImportSingleCredential(cfg *config.Config, d ScannedCredential, quota float
 	}
 
 	keyToStore := d.RawKey
+	credType := d.CredentialType
 	if keyToStore == "" {
 		if existing, ok := cfg.Providers[d.ProviderID]; ok {
 			keyToStore = existing.APIKey
+			if credType == "" {
+				credType = existing.ResolvedCredentialType()
+			}
 		}
+	}
+	if credType == "" {
+		credType = string(credential.Detect(keyToStore))
 	}
 
 	return cfg.SetProvider(config.ProviderConfig{
 		ID:               d.ProviderID,
 		DisplayName:      d.DisplayName,
 		APIKey:           keyToStore,
+		CredentialType:   credType,
 		CustomQuota:      quota,
 		ModelTier:        d.ModelTier,
 		Endpoint:         d.Endpoint,

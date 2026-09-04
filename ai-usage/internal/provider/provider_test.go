@@ -15,9 +15,9 @@ func TestAdapters_FetchUsage(t *testing.T) {
 
 	adapters := []core.ProviderAdapter{
 		NewAntigravityAdapter(10_000_000),
-		NewClaudeAdapter("", 5_000_000, "Claude 3.5 Sonnet"),
-		NewCodexAdapter("", 4_000_000, "GPT-4o"),
-		NewGeminiAdapter("", 4_000_000, "Gemini 1.5 Pro"),
+		NewClaudeAdapter("", "", 5_000_000, "Claude 3.5 Sonnet"),
+		NewCodexAdapter("", "", 4_000_000, "GPT-4o"),
+		NewGeminiAdapter("", "", 4_000_000, "Gemini 1.5 Pro"),
 		NewCopilotAdapter("", 3000, "Individual"),
 		NewCursorAdapter(500, "Cursor Pro"),
 		NewWarpAdapter(100, "Warp AI"),

@@ -10,20 +10,34 @@ import (
 	"ai-usage/internal/core"
 )
 
+// isolateHome points HOME, XDG_CONFIG_HOME and APPDATA at a throwaway
+// directory so a test that persists config never touches the developer's real
+// ~/.config/ai-usage/config.json. XDG_CONFIG_HOME matters because
+// os.UserConfigDir() prefers it over HOME on Linux.
+func isolateHome(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, ".config"))
+	t.Setenv("APPDATA", filepath.Join(dir, "AppData", "Roaming"))
+	return dir
+}
+
 func TestScanMachineWithDiff(t *testing.T) {
-	tempDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", origHome)
+	tempDir := isolateHome(t)
 
 	// Create fake anthropic env
-	os.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-1234567890")
-	defer os.Unsetenv("ANTHROPIC_API_KEY")
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test-key-1234567890")
 
 	// Create fake codex file
 	codexDir := filepath.Join(tempDir, ".codex")
 	_ = os.MkdirAll(codexDir, 0755)
 	_ = os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(`{"OPENAI_API_KEY":"sk-test-openai-secret"}`), 0600)
+
+	// Create fake Gemini OAuth credentials (short-lived bearer token)
+	geminiDir := filepath.Join(tempDir, ".gemini")
+	_ = os.MkdirAll(geminiDir, 0755)
+	_ = os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte(`{"access_token":"ya29.a0Adtest","refresh_token":"1//test"}`), 0600)
 
 	cfg := &config.Config{
 		AnchorBillingDay: 1,
@@ -44,7 +58,7 @@ func TestScanMachineWithDiff(t *testing.T) {
 		t.Fatalf("expected scanned credentials, got 0")
 	}
 
-	var foundCodex, foundClaude *ScannedCredential
+	var foundCodex, foundClaude, foundGemini *ScannedCredential
 	for i := range scanned {
 		if scanned[i].ProviderID == "codex" {
 			foundCodex = &scanned[i]
@@ -52,18 +66,37 @@ func TestScanMachineWithDiff(t *testing.T) {
 		if scanned[i].ProviderID == "claude" {
 			foundClaude = &scanned[i]
 		}
+		if scanned[i].ProviderID == "gemini" {
+			foundGemini = &scanned[i]
+		}
 	}
 
 	if foundCodex == nil {
 		t.Errorf("expected codex in scanned items")
-	} else if foundCodex.Status != StatusConfigured {
-		t.Errorf("expected codex to have status StatusConfigured, got %v", foundCodex.Status)
+	} else {
+		if foundCodex.Status != StatusConfigured {
+			t.Errorf("expected codex to have status StatusConfigured, got %v", foundCodex.Status)
+		}
+		if foundCodex.CredentialType != "api_key" {
+			t.Errorf("expected codex credential type api_key, got %q", foundCodex.CredentialType)
+		}
 	}
 
 	if foundClaude == nil {
 		t.Errorf("expected claude in scanned items")
-	} else if foundClaude.Status != StatusNew {
-		t.Errorf("expected claude to have status StatusNew, got %v", foundClaude.Status)
+	} else {
+		if foundClaude.Status != StatusNew {
+			t.Errorf("expected claude to have status StatusNew, got %v", foundClaude.Status)
+		}
+		if foundClaude.CredentialType != "api_key" {
+			t.Errorf("expected claude (from ANTHROPIC_API_KEY) credential type api_key, got %q", foundClaude.CredentialType)
+		}
+	}
+
+	if foundGemini == nil {
+		t.Errorf("expected gemini in scanned items")
+	} else if foundGemini.CredentialType != "oauth" {
+		t.Errorf("expected gemini credential type oauth, got %q", foundGemini.CredentialType)
 	}
 
 	// Now test updated key status
@@ -102,6 +135,7 @@ func TestFilterNewCredentials(t *testing.T) {
 }
 
 func TestImportSingleCredential(t *testing.T) {
+	isolateHome(t)
 	cfg := config.DefaultConfig()
 
 	cred := ScannedCredential{
@@ -133,16 +167,16 @@ func TestImportSingleCredential(t *testing.T) {
 	if p.GetDecryptedKey() != "sk-deepseek-test-key-9988" {
 		t.Errorf("expected decrypted key to match, got %v", p.GetDecryptedKey())
 	}
+	if p.CredentialType != "api_key" {
+		t.Errorf("expected credential type api_key, got %q", p.CredentialType)
+	}
 	if p.CreatedAt.IsZero() {
 		t.Errorf("expected non-zero CreatedAt")
 	}
 }
 
 func TestImportCredentials(t *testing.T) {
-	tempDir := t.TempDir()
-	origHome := os.Getenv("HOME")
-	os.Setenv("HOME", tempDir)
-	defer os.Setenv("HOME", origHome)
+	isolateHome(t)
 
 	cfg := config.DefaultConfig()
 	creds := []ScannedCredential{

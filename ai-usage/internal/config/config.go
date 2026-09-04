@@ -8,13 +8,16 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"ai-usage/internal/credential"
 )
 
 // ProviderConfig holds credentials, cycle reset dates, and metadata for a provider.
 type ProviderConfig struct {
 	ID                 string    `json:"id"`
 	DisplayName        string    `json:"display_name,omitempty"`
-	APIKey             string    `json:"api_key,omitempty"` // Stored encrypted on disk
+	APIKey             string    `json:"api_key,omitempty"`         // Stored encrypted on disk
+	CredentialType     string    `json:"credential_type,omitempty"` // "api_key" | "oauth" | "session"
 	CustomQuota        float64   `json:"custom_quota"`
 	ModelTier          string    `json:"model_tier,omitempty"`
 	Endpoint           string    `json:"endpoint,omitempty"`
@@ -35,6 +38,12 @@ func (p ProviderConfig) GetDecryptedKey() string {
 		return p.APIKey
 	}
 	return dec
+}
+
+// ResolvedCredentialType returns the recorded credential type, inferring it from
+// the key's shape when the config predates credential-type tagging.
+func (p ProviderConfig) ResolvedCredentialType() string {
+	return string(credential.Resolve(p.CredentialType, p.GetDecryptedKey()))
 }
 
 // SetPlainKey encrypts and sets the API key.
@@ -241,6 +250,12 @@ func (c *Config) SetProvider(p ProviderConfig) error {
 	}
 	p.LastActivity = time.Now().UTC()
 
+	// Classify the credential from its plaintext shape before it is encrypted,
+	// unless the caller already supplied an explicit type.
+	if p.CredentialType == "" {
+		p.CredentialType = string(credential.Detect(p.APIKey))
+	}
+
 	// Ensure API key is encrypted
 	if p.APIKey != "" {
 		enc, err := EncryptString(p.APIKey)
@@ -294,6 +309,7 @@ func (c *Config) UpdateKey(id, newPlainKey string) error {
 	if err := p.SetPlainKey(newPlainKey); err != nil {
 		return err
 	}
+	p.CredentialType = string(credential.Detect(newPlainKey))
 	p.Enabled = true
 	c.Providers[id] = p
 	return nil
