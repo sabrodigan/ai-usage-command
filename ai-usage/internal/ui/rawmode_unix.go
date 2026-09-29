@@ -11,7 +11,7 @@ import (
 // EnableRawMode switches the terminal to non-canonical / raw mode and returns a restore function.
 func EnableRawMode() (func(), error) {
 	fd := int(os.Stdin.Fd())
-	termios, err := unix.IoctlGetTermios(fd, unix.TCGETS)
+	termios, err := unix.IoctlGetTermios(fd, ioctlGetTermios)
 	if err != nil {
 		return func() {}, err
 	}
@@ -21,12 +21,12 @@ func EnableRawMode() (func(), error) {
 	termios.Cc[unix.VMIN] = 1
 	termios.Cc[unix.VTIME] = 0
 
-	if err := unix.IoctlSetTermios(fd, unix.TCSETS, termios); err != nil {
+	if err := unix.IoctlSetTermios(fd, ioctlSetTermios, termios); err != nil {
 		return func() {}, err
 	}
 
 	restore := func() {
-		_ = unix.IoctlSetTermios(fd, unix.TCSETS, &oldState)
+		_ = unix.IoctlSetTermios(fd, ioctlSetTermios, &oldState)
 	}
 	return restore, nil
 }
