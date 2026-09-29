@@ -29,8 +29,8 @@ type ScannedCredential struct {
 	ProviderID        string           `json:"provider_id"`
 	DisplayName       string           `json:"display_name"`
 	SourcePath        string           `json:"source_path"`
-	SourceType        string           `json:"source_type"`      // "file", "env", "service"
-	CredentialType    string           `json:"credential_type"`  // "api_key" | "oauth" | "session"
+	SourceType        string           `json:"source_type"`     // "file", "env", "service"
+	CredentialType    string           `json:"credential_type"` // "api_key" | "oauth" | "session"
 	KeySnippet        string           `json:"key_snippet"`
 	RawKey            string           `json:"-"`
 	ModelTier         string           `json:"model_tier"`
@@ -112,6 +112,35 @@ func ScanMachineWithDiff(cfg *config.Config) []ScannedCredential {
 			SuggestedCycleDay: globalCycleDay,
 			DefaultQuota:      500,
 			Unit:              core.UnitRequests,
+		})
+	}
+
+	// 2b. Meta Muse coding agent (~/.config/muse, sessions in ~/.local/share/muse).
+	// Usage is read from local session journals, so the Meta token is never imported.
+	museConfig := filepath.Join(home, ".config", "muse")
+	museData := filepath.Join(home, ".local", "share", "muse")
+	if _, err := os.Stat(filepath.Join(museConfig, "auth.json")); err == nil || dirExists(filepath.Join(museData, "sessions")) {
+		tier := "Muse Spark"
+		var settings struct {
+			Model string `json:"model"`
+		}
+		if data, err := os.ReadFile(filepath.Join(museConfig, "settings.json")); err == nil {
+			if json.Unmarshal(data, &settings) == nil && settings.Model != "" {
+				tier = settings.Model
+			}
+		}
+		addOrUpdate(ScannedCredential{
+			ProviderID:        "muse",
+			DisplayName:       "Meta Muse",
+			SourcePath:        museData,
+			SourceType:        "file (~/.local/share/muse sessions)",
+			CredentialType:    string(credential.Session),
+			KeySnippet:        "Local Session Active ✔",
+			RawKey:            "",
+			ModelTier:         tier,
+			SuggestedCycleDay: globalCycleDay,
+			DefaultQuota:      50_000_000,
+			Unit:              core.UnitTokens,
 		})
 	}
 
@@ -524,3 +553,7 @@ func maskKey(k string) string {
 	return k[:4] + "..." + k[len(k)-2:]
 }
 
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}

@@ -15,9 +15,9 @@ func NewHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 		Transport: &http.Transport{
-			MaxIdleConns:        10,
-			IdleConnTimeout:     30 * time.Second,
-			TLSClientConfig:     &tls.Config{MinVersion: tls.VersionTLS12},
+			MaxIdleConns:       10,
+			IdleConnTimeout:    30 * time.Second,
+			TLSClientConfig:    &tls.Config{MinVersion: tls.VersionTLS12},
 			DisableCompression: false,
 		},
 	}

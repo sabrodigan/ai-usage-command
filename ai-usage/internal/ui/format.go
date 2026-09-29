@@ -34,11 +34,11 @@ func VisualWidth(s string) int {
 
 		// Handle Double-width Emojis and CJK characters
 		if (r >= 0x1F300 && r <= 0x1FAFF) || // Emojis & Pictographs
-			(r >= 0x2600 && r <= 0x27BF) ||   // Miscellaneous Symbols & Dingbats
-			(r >= 0x2300 && r <= 0x23FF) ||   // Misc Technical
-			(r >= 0x4E00 && r <= 0x9FFF) ||   // CJK Unified Ideographs
-			(r >= 0x3000 && r <= 0x303F) ||   // CJK Symbols and Punctuation
-			(r >= 0xFF01 && r <= 0xFF60) {    // Fullwidth Forms
+			(r >= 0x2600 && r <= 0x27BF) || // Miscellaneous Symbols & Dingbats
+			(r >= 0x2300 && r <= 0x23FF) || // Misc Technical
+			(r >= 0x4E00 && r <= 0x9FFF) || // CJK Unified Ideographs
+			(r >= 0x3000 && r <= 0x303F) || // CJK Symbols and Punctuation
+			(r >= 0xFF01 && r <= 0xFF60) { // Fullwidth Forms
 			w += 2
 		} else {
 			w += 1

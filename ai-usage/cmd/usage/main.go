@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +21,7 @@ import (
 	"ai-usage/internal/ui"
 )
 
-const Version = "2.1.0"
+const Version = "2.2.0"
 
 func ordinal(n int) string {
 	switch n {
@@ -50,6 +51,8 @@ func main() {
 		runExample(os.Args[2:])
 	case "now":
 		runNow(os.Args[2:])
+	case "local":
+		runLocal(os.Args[2:])
 	case "watch", "tui", "top", "dashboard":
 		runWatch(os.Args[2:])
 	case "scan":
@@ -127,6 +130,14 @@ func getActiveTasks(cfg *config.Config, now time.Time) []core.ProviderTask {
 		})
 	}
 
+	// Meta Muse coding agent adapter
+	if p, exists := cfg.Providers["muse"]; exists && p.Enabled {
+		tasks = append(tasks, core.ProviderTask{
+			Adapter: provider.NewMuseAdapter(p.CustomQuota, p.ModelTier),
+			Window:  getWin(p),
+		})
+	}
+
 	// Warp Terminal adapter
 	if p, exists := cfg.Providers["warp"]; exists && p.Enabled {
 		tasks = append(tasks, core.ProviderTask{
@@ -169,7 +180,7 @@ func getActiveTasks(cfg *config.Config, now time.Time) []core.ProviderTask {
 
 	// Custom registered providers
 	for id, p := range cfg.Providers {
-		if id == "antigravity" || id == "cursor" || id == "warp" || id == "claude" || id == "codex" || id == "gemini" || id == "copilot" {
+		if id == "antigravity" || id == "cursor" || id == "muse" || id == "warp" || id == "claude" || id == "codex" || id == "gemini" || id == "copilot" {
 			continue
 		}
 		if p.Enabled {
@@ -259,6 +270,97 @@ func runExample(args []string) {
 
 func runNow(args []string) {
 	runUsageSnapshot(args, true, "now")
+}
+
+// getLocalTasks returns adapters that read on-disk session telemetry only. They
+// never touch stored API keys or the network, and run whether or not the tool
+// has been imported with `scan`, so long as its data exists on this machine.
+func getLocalTasks(cfg *config.Config, now time.Time) []core.ProviderTask {
+	home, _ := os.UserHomeDir()
+	configDir, _ := os.UserConfigDir()
+	candidates := []struct {
+		id      string
+		paths   []string
+		adapter func(p config.ProviderConfig) core.ProviderAdapter
+	}{
+		{"muse", []string{filepath.Join(home, ".local", "share", "muse", "sessions")},
+			func(p config.ProviderConfig) core.ProviderAdapter {
+				return provider.NewMuseAdapter(p.CustomQuota, p.ModelTier)
+			}},
+		{"cursor", []string{filepath.Join(configDir, "Cursor", "User", "globalStorage", "state.vscdb"), filepath.Join(home, ".cursor", "ai-tracking")},
+			func(p config.ProviderConfig) core.ProviderAdapter {
+				return provider.NewCursorAdapter(p.CustomQuota, p.ModelTier)
+			}},
+		{"antigravity", []string{filepath.Join(home, ".gemini", "antigravity-cli")},
+			func(p config.ProviderConfig) core.ProviderAdapter {
+				return provider.NewAntigravityAdapter(p.CustomQuota)
+			}},
+		{"warp", []string{filepath.Join(home, ".warp")},
+			func(p config.ProviderConfig) core.ProviderAdapter {
+				return provider.NewWarpAdapter(p.CustomQuota, p.ModelTier)
+			}},
+	}
+
+	var tasks []core.ProviderTask
+	for _, c := range candidates {
+		p, configured := cfg.Providers[c.id]
+		if configured && !p.Enabled {
+			continue
+		}
+		present := false
+		for _, path := range c.paths {
+			if _, err := os.Stat(path); err == nil {
+				present = true
+				break
+			}
+		}
+		if !present {
+			continue
+		}
+		day := p.AnchorBillingDay
+		if day <= 0 {
+			day = cfg.AnchorBillingDay
+		}
+		tasks = append(tasks, core.ProviderTask{
+			Adapter: c.adapter(p),
+			Window:  core.CalculateBillingCycle(now, day),
+		})
+	}
+	return tasks
+}
+
+// runLocal reports usage from local agent session data only (no keys, no network).
+func runLocal(args []string) {
+	fs := flag.NewFlagSet("local", flag.ExitOnError)
+	jsonFlag := fs.Bool("json", false, "Output usage as JSON")
+	csvFlag := fs.Bool("csv", false, "Output usage as CSV")
+	timeoutSec := fs.Int("timeout", 10, "Scan timeout in seconds")
+	noConfig := fs.Bool("no-config", false, "Ignore ~/.config/ai-usage: calendar month, default quotas")
+	_ = fs.Parse(args)
+
+	cfg := config.DefaultConfig()
+	if !*noConfig {
+		if loaded, err := config.Load(); err == nil {
+			cfg = loaded
+		}
+	}
+	if cfg.AnchorBillingDay <= 0 {
+		cfg.AnchorBillingDay = 1
+	}
+
+	now := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutSec)*time.Second)
+	defer cancel()
+	snapshot := core.FetchAndAggregate(ctx, getLocalTasks(cfg, now), core.CalculateBillingCycle(now, cfg.AnchorBillingDay), true)
+
+	switch {
+	case *jsonFlag:
+		_ = ui.RenderJSON(os.Stdout, snapshot)
+	case *csvFlag:
+		_ = ui.RenderCSV(os.Stdout, snapshot)
+	default:
+		ui.RenderTable(os.Stdout, snapshot)
+	}
 }
 
 func runRecommend(args []string) {
@@ -872,6 +974,7 @@ Core Commands:
   live                        Query and display real-time live data from APIs & logs (default)
   example                     Show representative simulation / benchmark demo data
   now                         Alias for live usage report
+  local [--json] [--no-config] Usage from local agent sessions only (Muse, Cursor, Antigravity, Warp; no keys)
   watch [--interval <sec>]    Open interactive live auto-refreshing dashboard / TUI (auto-syncs machine)
   keys                        Interactive manager to view, reveal/hide, and inspect private API keys
   scan                        Scan machine environment & display configured vs new credentials

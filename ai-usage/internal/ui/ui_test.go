@@ -234,4 +234,3 @@ func TestHeaderBox_BillingWindowProvidersAlignment(t *testing.T) {
 		}
 	}
 }
-

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -17,24 +18,47 @@ const (
 
 // ProviderUsage holds the normalized usage data for a single provider.
 type ProviderUsage struct {
-	ProviderID    string     `json:"provider_id" bson:"provider_id"`
-	DisplayName   string     `json:"display_name" bson:"display_name"`
-	ModelOrTier   string     `json:"model_or_tier" bson:"model_or_tier"`
+	ProviderID    string       `json:"provider_id" bson:"provider_id"`
+	DisplayName   string       `json:"display_name" bson:"display_name"`
+	ModelOrTier   string       `json:"model_or_tier" bson:"model_or_tier"`
+	Unit          MetricUnit   `json:"unit" bson:"unit"`
+	Consumed      float64      `json:"consumed" bson:"consumed"`
+	Quota         float64      `json:"quota" bson:"quota"`
+	Remaining     float64      `json:"remaining" bson:"remaining"`
+	PercentUsed   float64      `json:"percent_used" bson:"percent_used"`
+	EstimatedCost float64      `json:"estimated_cost_usd" bson:"estimated_cost_usd"`
+	BillingStart  time.Time    `json:"billing_start" bson:"billing_start"`
+	BillingEnd    time.Time    `json:"billing_end" bson:"billing_end"`
+	LastUpdated   time.Time    `json:"last_updated" bson:"last_updated"`
+	Status        string       `json:"status" bson:"status"` // "ok", "degraded", "error", "stale"
+	ErrorMessage  string       `json:"error_message,omitempty" bson:"error_message,omitempty"`
+	IsStale       bool         `json:"is_stale" bson:"is_stale"`
+	DaysInactive  int          `json:"days_inactive,omitempty" bson:"days_inactive,omitempty"`
+	IsLive        bool         `json:"is_live" bson:"is_live"`
+	DataSource    string       `json:"data_source,omitempty" bson:"data_source,omitempty"`
+	Models        []ModelUsage `json:"models,omitempty" bson:"models,omitempty"`
+	LastActivity  *time.Time   `json:"last_activity,omitempty" bson:"last_activity,omitempty"`
+}
+
+// ModelUsage breaks a provider's consumption down by the model that served it.
+type ModelUsage struct {
+	Model         string     `json:"model" bson:"model"`
 	Unit          MetricUnit `json:"unit" bson:"unit"`
 	Consumed      float64    `json:"consumed" bson:"consumed"`
-	Quota         float64    `json:"quota" bson:"quota"`
-	Remaining     float64    `json:"remaining" bson:"remaining"`
-	PercentUsed   float64    `json:"percent_used" bson:"percent_used"`
-	EstimatedCost float64    `json:"estimated_cost_usd" bson:"estimated_cost_usd"`
-	BillingStart  time.Time  `json:"billing_start" bson:"billing_start"`
-	BillingEnd    time.Time  `json:"billing_end" bson:"billing_end"`
-	LastUpdated   time.Time  `json:"last_updated" bson:"last_updated"`
-	Status        string     `json:"status" bson:"status"` // "ok", "degraded", "error", "stale"
-	ErrorMessage  string     `json:"error_message,omitempty" bson:"error_message,omitempty"`
-	IsStale       bool       `json:"is_stale" bson:"is_stale"`
-	DaysInactive  int        `json:"days_inactive,omitempty" bson:"days_inactive,omitempty"`
-	IsLive        bool       `json:"is_live" bson:"is_live"`
-	DataSource    string     `json:"data_source,omitempty" bson:"data_source,omitempty"`
+	Requests      int        `json:"requests" bson:"requests"`
+	InputTokens   float64    `json:"input_tokens,omitempty" bson:"input_tokens,omitempty"`
+	CachedTokens  float64    `json:"cached_tokens,omitempty" bson:"cached_tokens,omitempty"`
+	OutputTokens  float64    `json:"output_tokens,omitempty" bson:"output_tokens,omitempty"`
+	EstimatedCost float64    `json:"estimated_cost_usd,omitempty" bson:"estimated_cost_usd,omitempty"`
+}
+
+// SummarizeModels renders a breakdown as "a (n) · b (m)", busiest model first.
+func SummarizeModels(models []ModelUsage) string {
+	parts := make([]string, 0, len(models))
+	for _, m := range models {
+		parts = append(parts, fmt.Sprintf("%s (%d)", m.Model, m.Requests))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // FormatConsumed returns a readable string formatted for CLI display.

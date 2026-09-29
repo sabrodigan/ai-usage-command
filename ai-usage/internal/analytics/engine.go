@@ -14,7 +14,7 @@ type Recommendation struct {
 	Title               string  `json:"title"`
 	Message             string  `json:"message"`
 	PotentialSavingsUSD float64 `json:"potential_savings_usd,omitempty"`
-	Urgency             string  `json:"urgency"`  // "HIGH", "MEDIUM", "LOW", "TIP"
+	Urgency             string  `json:"urgency"` // "HIGH", "MEDIUM", "LOW", "TIP"
 }
 
 // GenerateInsights analyzes current snapshot and generates actionable AI recommendations.

@@ -20,6 +20,7 @@ func TestAdapters_FetchUsage(t *testing.T) {
 		NewGeminiAdapter("", "", 4_000_000, "Gemini 1.5 Pro"),
 		NewCopilotAdapter("", 3000, "Individual"),
 		NewCursorAdapter(500, "Cursor Pro"),
+		NewMuseAdapter(50_000_000, ""),
 		NewWarpAdapter(100, "Warp AI"),
 		NewCustomAdapter("deepseek", "DeepSeek API", "https://api.deepseek.com", "", 10_000_000, "DeepSeek-V3"),
 	}

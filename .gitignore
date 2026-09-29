@@ -1,0 +1,9 @@
+# Build output: binaries are published as GitHub Release assets, not committed.
+/ai-usage/usage
+/ai-usage/dist/
+
+# Local runtime state
+*.db
+*.db-*
+__pycache__/
+*.pyc

@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-usage
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ai-usage/go.mod
+          cache-dependency-path: ai-usage/go.sum
+
+      - name: Tag must match const Version
+        run: |
+          want="v$(make -s version)"
+          if [ "$GITHUB_REF_NAME" != "$want" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match cmd/usage/main.go ($want)"
+            exit 1
+          fi
+
+      - name: gofmt, vet, race tests
+        run: make check
+
+      - uses: actions/checkout@v5
+        with:
+          repository: sabrodigan/omarchy-ai-usage
+          path: plugin
+
+      - name: Omarchy plugin contract tests
+        run: make plugin-test PLUGIN_DIR="$GITHUB_WORKSPACE/plugin"
+
+      - name: Build binaries
+        run: make build-all
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/usage-* dist/SHA256SUMS \
+            --title "usage $GITHUB_REF_NAME" --generate-notes --verify-tag

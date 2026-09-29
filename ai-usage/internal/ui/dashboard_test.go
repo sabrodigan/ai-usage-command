@@ -290,4 +290,3 @@ func TestDashboardTableAlignment(t *testing.T) {
 		}
 	}
 }
-

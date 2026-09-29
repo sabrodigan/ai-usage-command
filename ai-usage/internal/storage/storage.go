@@ -89,10 +89,10 @@ func (f *FileStore) Close() error {
 
 // SnapshotDoc is the schema used for MongoDB / Remote Document stores.
 type SnapshotDoc struct {
-	ID        string              `json:"id" bson:"_id,omitempty"`
-	UserID    string              `json:"user_id" bson:"user_id"`
-	Timestamp time.Time           `json:"timestamp" bson:"timestamp"`
-	Cycle     core.BillingWindow  `json:"billing_cycle" bson:"billing_cycle"`
+	ID        string               `json:"id" bson:"_id,omitempty"`
+	UserID    string               `json:"user_id" bson:"user_id"`
+	Timestamp time.Time            `json:"timestamp" bson:"timestamp"`
+	Cycle     core.BillingWindow   `json:"billing_cycle" bson:"billing_cycle"`
 	Providers []core.ProviderUsage `json:"providers" bson:"providers"`
-	TotalCost float64             `json:"total_cost_usd" bson:"total_cost_usd"`
+	TotalCost float64              `json:"total_cost_usd" bson:"total_cost_usd"`
 }

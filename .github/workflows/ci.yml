@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-usage
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: ai-usage/go.mod
+          cache-dependency-path: ai-usage/go.sum
+
+      - name: gofmt, vet, race tests
+        run: make check
+
+      - name: Cross-compile release targets
+        run: make build-all
+
+      # The Omarchy widget consumes `usage local --json`; run its tests, including
+      # the end-to-end contract test, against the binary this commit produces.
+      - uses: actions/checkout@v5
+        with:
+          repository: sabrodigan/omarchy-ai-usage
+          path: plugin
+
+      - name: Omarchy plugin contract tests
+        run: make plugin-test PLUGIN_DIR="$GITHUB_WORKSPACE/plugin"
