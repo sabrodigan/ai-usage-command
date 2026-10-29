@@ -1,6 +1,6 @@
 # Build output: binaries are published as GitHub Release assets, not committed.
-/ai-usage/usage
-/ai-usage/dist/
+/usage
+/dist/
 
 # Local runtime state
 *.db
