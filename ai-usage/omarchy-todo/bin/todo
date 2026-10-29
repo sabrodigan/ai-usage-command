@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""Local command-oriented todo manager; no third-party dependencies."""
+
+VERSION = '1.5.0'
+AUTHOR = 'Stephen Brodigan'
+
+import argparse
+from contextlib import closing
+import datetime as dt
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+import time
+
+
+def date(value):
+    today = dt.date.today()
+    if value == 'today':
+        return today.isoformat()
+    if value == 'tomorrow':
+        return (today + dt.timedelta(days=1)).isoformat()
+    if value == 'none':
+        return None
+    try:
+        if '/' in value:
+            return dt.datetime.strptime(value, '%d/%m/%Y').date().isoformat()
+        return dt.date.fromisoformat(value).isoformat()
+    except ValueError:
+        raise argparse.ArgumentTypeError('use today, tomorrow, none, DD/MM/YYYY, or YYYY-MM-DD')
+
+
+def title(value):
+    value = value.strip()
+    if not value or any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise argparse.ArgumentTypeError('title must be nonempty and contain no control characters')
+    return value
+
+
+def outcome(value):
+    value = value.strip()
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise argparse.ArgumentTypeError('outcome must contain no control characters')
+    return value or None
+
+
+def completed_stamp():
+    return dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+
+def parser():
+    p = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Dates:
+  --due DD/MM/YYYY uses day/month/year (08/09/2026 = 8 September 2026).
+  Also accepts YYYY-MM-DD, today, tomorrow, or none (no due date).
+  New tasks are due today unless --due is supplied.
+
+Examples:
+  todo interactive
+  todo add "Book appointment" --due "08/09/2026"
+  todo change 1 --due "15/09/2026"
+  todo add "Send invoice" --due tomorrow --priority high
+
+Run todo COMMAND --help for command options.''')
+    commands = p.add_subparsers(dest='command', required=True)
+    commands.add_parser('interactive', help='choose a todo number, then C create, R read, U update, D delete; Enter closes')
+    add = commands.add_parser('add', help='add a task (due today by default)', epilog='Example: todo add "Book appointment" --due "08/09/2026"')
+    add.add_argument('title', type=title)
+    add.add_argument('--due', type=date, default='today', help='DD/MM/YYYY (day/month/year), YYYY-MM-DD, today, tomorrow, or none')
+    add.add_argument('--priority', choices=['low', 'normal', 'high'], default='normal')
+    listing = commands.add_parser('list', help='list open tasks')
+    filters = listing.add_mutually_exclusive_group()
+    filters.add_argument('--today', action='store_true')
+    filters.add_argument('--overdue', action='store_true')
+    listing.add_argument('--all', action='store_true', help='include completed tasks')
+    listing.add_argument('--json', action='store_true')
+    for name in ['reopen', 'delete']:
+        commands.add_parser(name).add_argument('id', type=int)
+    complete = commands.add_parser('complete', help='mark a task done, recording date, time, and optional outcome')
+    complete.add_argument('id', type=int)
+    complete.add_argument('--outcome', type=outcome, default=None)
+    change = commands.add_parser('change', aliases=['edit'], help='change title, due date, or priority', epilog='Example: todo change 1 --due "15/09/2026"')
+    change.add_argument('id', type=int)
+    change.add_argument('--title', type=title)
+    change.add_argument('--due', type=date, default=argparse.SUPPRESS, help='DD/MM/YYYY (day/month/year), YYYY-MM-DD, today, tomorrow, or none')
+    change.add_argument('--priority', choices=['low', 'normal', 'high'])
+    priority = commands.add_parser('priority')
+    priority.add_argument('id', type=int)
+    priority.add_argument('priority', choices=['low', 'normal', 'high'])
+    commands.add_parser('status', help='JSON counts: total open, due today, and overdue')
+    return p
+
+
+def connect():
+    path = Path(os.environ.get('TODO_DB', str(Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share'))) / 'omarchy-todo/tasks.sqlite3')))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    db = sqlite3.connect(path, timeout=10)
+    db.row_factory = sqlite3.Row
+    db.execute('CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, due TEXT, priority TEXT NOT NULL, completed INTEGER NOT NULL DEFAULT 0, completed_at TEXT, outcome TEXT)')
+    columns = {row[1] for row in db.execute('PRAGMA table_info(tasks)')}
+    if 'completed_at' not in columns:
+        db.execute('ALTER TABLE tasks ADD COLUMN completed_at TEXT')
+    if 'outcome' not in columns:
+        db.execute('ALTER TABLE tasks ADD COLUMN outcome TEXT')
+    return db
+
+
+def notify():
+    try:
+        subprocess.run(['omarchy-shell', 'sabrodigan.todo', 'refresh'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+    except (OSError, subprocess.TimeoutExpired):
+        pass  # The CLI also works without a desktop session.
+
+
+def menu_key():
+    """Read one menu key immediately on a terminal; keep pipes usable."""
+    if not sys.stdin.isatty():
+        return input().strip().lower()
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    previous = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        key = sys.stdin.read(1)
+        if key == '\x04':
+            raise EOFError
+        print()
+        return '' if key in '\r\n' else key.lower()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, previous)
+
+
+def ask(label, validator, default=None):
+    while True:
+        value = input(label).strip()
+        if not value and default is not None:
+            value = default
+        try:
+            return validator(value)
+        except (ValueError, argparse.ArgumentTypeError) as error:
+            print(f'Please try again: {error}')
+
+
+def choice(*options):
+    def validate(value):
+        value = value.lower()
+        if value not in options:
+            raise ValueError('choose ' + ', '.join(options))
+        return value
+    return validate
+
+
+def task_details(task):
+    text = (f"Todo #{task['id']}\n{task['title']}\n"
+            f"Due: {task['due'] or 'none'}\nPriority: {task['priority']}\n"
+            f"Status: {'done' if task['completed'] else 'open'}")
+    if task['completed']:
+        if task.get('completed_at'):
+            text += f"\nCompleted: {task['completed_at']}"
+        if task.get('outcome'):
+            text += f"\nOutcome: {task['outcome']}"
+    return text
+
+
+def read_task(task):
+    text = task_details(task)
+    animated = sys.stdout.isatty() and sys.stdin.isatty() and os.environ.get('TERM') != 'dumb'
+    if not animated:
+        print(text)
+        input('\nPress Enter to return to the menu...')
+        return
+    # DECSCUSR 1 requests a blinking block cursor; 0 restores terminal default.
+    try:
+        print('\033[1 q', end='', flush=True)
+        delay = min(0.025, 4.0 / max(1, len(text)))
+        for character in text:
+            print(character, end='', flush=True)
+            time.sleep(delay)
+        input('\n\nPress Enter to return to the menu...')
+    finally:
+        print('\033[0 q', end='', flush=True)
+
+
+def fetch_task(task_id):
+    with closing(connect()) as db:
+        row = db.execute('SELECT * FROM tasks WHERE id=?', (task_id,)).fetchone()
+    return dict(row) if row is not None else None
+
+
+def create_task():
+    name = ask('Title: ', title)
+    due = ask('Due [today] (DD/MM/YYYY, YYYY-MM-DD, tomorrow, none): ', date, 'today')
+    priority = ask('Priority [normal] (low/normal/high): ', choice('low', 'normal', 'high'), 'normal')
+    main(['add', name, '--due', due or 'none', '--priority', priority])
+
+
+def update_task(task_id, task):
+    print('Enter keeps each current value. Ctrl+C cancels the update.')
+    status = ask(f'Status [{"done" if task["completed"] else "open"}] (open/done): ', choice('open', 'done'), 'done' if task['completed'] else 'open')
+    with closing(connect()) as db, db:
+        if status == 'done':
+            current_outcome = task.get('outcome') or None
+            label = f'Outcome [{current_outcome}]: ' if current_outcome else 'Outcome (Enter to leave blank): '
+            new_outcome = ask(label, outcome, current_outcome or '')
+            updated = db.execute('UPDATE tasks SET completed=1,completed_at=COALESCE(completed_at,?),outcome=? WHERE id=?', (completed_stamp(), new_outcome, task_id)).rowcount
+        else:
+            name = ask(f'Title [{task["title"]}]: ', title, task['title'])
+            due = ask(f'Due [{task["due"] or "none"}] (DD/MM/YYYY, YYYY-MM-DD, today, tomorrow, none): ', date, task['due'] or 'none')
+            priority = ask(f'Priority [{task["priority"]}] (low/normal/high): ', choice('low', 'normal', 'high'), task['priority'])
+            updated = db.execute('UPDATE tasks SET title=?,due=?,priority=?,completed=0,completed_at=NULL,outcome=NULL WHERE id=?', (name, due, priority, task_id)).rowcount
+    print(f'Updated todo #{task_id}.' if updated else f'Todo #{task_id} was deleted before the update could be saved.')
+    notify()
+
+
+def delete_task(task_id, task):
+    """Run the delete confirmation; return True when the todo was deleted."""
+    if ask('Delete this todo? [Y/n]: ', choice('y', 'yes', 'n', 'no'), 'y') in ('n', 'no'):
+        print('Deletion cancelled.')
+        return False
+    with closing(connect()) as db, db:
+        deleted = db.execute('DELETE FROM tasks WHERE id=?', (task_id,)).rowcount
+    print(f'Deleted todo #{task_id}: {task["title"]}' if deleted else f'Todo #{task_id} was already deleted.')
+    notify()
+    return True
+
+
+def todo_menu(task_id):
+    """Offer CRUD for one todo; return 'close' or 'back' (to the list)."""
+    while True:
+        task = fetch_task(task_id)
+        if task is None:
+            print(f'Todo #{task_id} was deleted.')
+            return 'back'
+        print('\n' + task_details(task))
+        print('\n[C] Create  [R] Read  [U] Update  [D] Delete  [B] Back to list  [Enter] Close')
+        print('Choose: ', end='', flush=True)
+        command = menu_key()
+        if not command:
+            return 'close'
+        if command == 'b':
+            return 'back'
+        if command == 'c':
+            create_task()
+        elif command == 'r':
+            read_task(task)
+        elif command == 'u':
+            update_task(task_id, task)
+        elif command == 'd':
+            if delete_task(task_id, task):
+                return 'back'
+        else:
+            print('Choose C, R, U, D, B, or Enter to close.')
+
+
+def interactive():
+    while True:
+        try:
+            print(f"\nToday's Todos v{VERSION} by {AUTHOR}\nOpen todos\n" + '─' * 40)
+            main(['list'])
+            raw_id = input('\nTodo number (C to create, Enter to close): ').strip()
+            if not raw_id:
+                return
+            if raw_id.lower() == 'c':
+                create_task()
+                continue
+            try:
+                task_id = int(raw_id)
+            except ValueError:
+                print('Please enter a todo number from the list.')
+                continue
+            if fetch_task(task_id) is None:
+                print(f'Todo #{task_id} does not exist.')
+                continue
+            if todo_menu(task_id) == 'close':
+                return
+        except KeyboardInterrupt:
+            print('\nCancelled. Returning to the menu.')
+        except EOFError:
+            print('\nClosing todos.')
+            return
+        except (sqlite3.Error, OSError) as error:
+            print(f'Could not complete the action: {error}')
+
+
+def main(argv=None):
+    p = parser()
+    args = p.parse_args(argv)
+    if args.command == 'interactive':
+        interactive()
+        return
+    db = connect()
+    with closing(db), db:
+        cmd = args.command
+        if cmd in ['list', 'status']:
+            today = dt.date.today().isoformat()
+            rows = [dict(r) for r in db.execute("SELECT * FROM tasks ORDER BY completed, due IS NULL, due, CASE priority WHEN 'high' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, id")]
+            if cmd == 'status':
+                pending = [r for r in rows if not r['completed']]
+                print(json.dumps({'total': len(pending), 'today': sum(r['due'] == today for r in pending), 'overdue': sum(bool(r['due'] and r['due'] < today) for r in pending)}))
+                return
+            rows = [r for r in rows if (args.all or not r['completed']) and (not args.today or r['due'] == today) and (not args.overdue or (r['due'] and r['due'] < today))]
+            if args.json:
+                print(json.dumps(rows))
+            else:
+                for r in rows:
+                    print(f"{r['id']:>4}  {'done' if r['completed'] else 'open':4}  {r['due'] or 'no date':10}  {r['priority']:6}  {r['title']}")
+                if not rows:
+                    print('No tasks.')
+            return
+        if cmd == 'add':
+            cursor = db.execute('INSERT INTO tasks(title,due,priority) VALUES (?,?,?)', (args.title, args.due, args.priority))
+            message = f'Added task {cursor.lastrowid}.'
+        else:
+            if not db.execute('SELECT id FROM tasks WHERE id=?', (args.id,)).fetchone():
+                p.error(f'task {args.id} does not exist')
+            if cmd == 'delete':
+                db.execute('DELETE FROM tasks WHERE id=?', (args.id,))
+            elif cmd == 'complete':
+                db.execute('UPDATE tasks SET completed=1,completed_at=COALESCE(completed_at,?),outcome=COALESCE(?,outcome) WHERE id=?', (completed_stamp(), args.outcome, args.id))
+            elif cmd == 'reopen':
+                db.execute('UPDATE tasks SET completed=0,completed_at=NULL,outcome=NULL WHERE id=?', (args.id,))
+            else:
+                updates = {k: getattr(args, k) for k in ['title', 'due', 'priority'] if hasattr(args, k) and (k == 'due' or getattr(args, k) is not None)}
+                if not updates:
+                    p.error('provide --title, --due, or --priority')
+                db.execute('UPDATE tasks SET ' + ','.join(k + '=?' for k in updates) + ' WHERE id=?', (*updates.values(), args.id))
+            message = f'Task {args.id}: {cmd}.'
+    print(message)
+    notify()
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except (sqlite3.Error, OSError) as error:
+        print(f'todo: {error}', file=sys.stderr)
+        sys.exit(1)
